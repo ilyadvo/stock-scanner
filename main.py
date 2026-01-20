@@ -31,28 +31,25 @@ plt.rcParams['axes.titlesize'] = 'medium'
 # --- Helper Functions ---
 
 def get_sp500_tickers():
-    """Fetches the S&P 500 ticker list from Wikipedia."""
+    """Fetches S&P 500 tickers from a reliable CSV source to avoid Wikipedia blocking."""
     try:
-        # We add a User-Agent header so Wikipedia treats us like a browser, not a bot
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        }
-        response = requests.get(SP500_WIKI_URL, headers=headers, timeout=10)
-        response.raise_for_status()
+        # שימוש במאגר נתונים ציבורי ב-GitHub במקום ויקיפדיה
+        url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
+        # קריאת ה-CSV ישירות באמצעות pandas
+        df = pd.read_csv(url)
+        tickers = df['Symbol'].tolist()
         
-        soup = BeautifulSoup(response.text, 'html.parser')
-        table = soup.find('table', {'class': 'wikitable sortable'})
-        tickers = []
-        for row in table.findAll('tr')[1:]:
-            ticker = row.findAll('td')[0].text.strip()
-            tickers.append(ticker.replace('.', '-')) # Handle BRK.B -> BRK-B
-        return tickers
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching S&P 500 tickers: {e}")
-        return []
+        # תיקון פורמט עבור Yahoo Finance (החלפת נקודה במקף, למשל BRK.B ל-BRK-B)
+        clean_tickers = [ticker.replace('.', '-') for ticker in tickers]
+        
+        print(f"Successfully loaded {len(clean_tickers)} tickers.")
+        return clean_tickers
+
     except Exception as e:
-        print(f"Error parsing S&P 500 tickers: {e}")
-        return []
+        print(f"Error fetching tickers: {e}")
+        # במקרה חירום: מחזיר רשימה ידנית קצרה כדי שהסריקה לא תיכשל לגמרי
+        print("Using fallback list...")
+        return ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA', 'BRK-B', 'LLY', 'V']
 
 def send_telegram_message(chat_id, message, token):
     """Sends a text message to a specified Telegram chat."""
