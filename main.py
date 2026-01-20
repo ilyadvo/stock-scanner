@@ -33,8 +33,13 @@ plt.rcParams['axes.titlesize'] = 'medium'
 def get_sp500_tickers():
     """Fetches the S&P 500 ticker list from Wikipedia."""
     try:
-        response = requests.get(SP500_WIKI_URL, timeout=10)
+        # We add a User-Agent header so Wikipedia treats us like a browser, not a bot
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        response = requests.get(SP500_WIKI_URL, headers=headers, timeout=10)
         response.raise_for_status()
+        
         soup = BeautifulSoup(response.text, 'html.parser')
         table = soup.find('table', {'class': 'wikitable sortable'})
         tickers = []
