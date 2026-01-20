@@ -1,4 +1,4 @@
-name: "Daily S&P 500 Stock Scan"
+name: "Daily S&P 500 Stock Scan"  # Fixing action
 
 on:
   schedule:
