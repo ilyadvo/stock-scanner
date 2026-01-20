@@ -191,15 +191,16 @@ def run_scan():
             else:
                 trend = "Flat ⚪"
 
-            # Alert Condition: Price within 5% of SMA 150
+            # Alert Condition: Price within 2.5% of SMA 150 (שינינו ל-2.5% ליתר דיוק)
             dist_pct = abs(current_close - current_sma_150) / current_sma_150
-            if dist_pct <= 0.05:
+            if dist_pct <= 0.025:
                 alerts_count += 1
                 ticker_obj = yf.Ticker(ticker)
                 market_cap = get_market_cap(ticker_obj)
                 
+                # כאן השינוי: הוספנו גרשיים הפוכים מסביב לטיקר כדי שיהיה ניתן להעתיק אותו
                 alert_message = (
-                    f"🔔 *Stock Alert: {ticker}*\n"
+                    f"🔔 *Alert:* `{ticker}`\n"
                     f"Price: ${current_close:.2f}\n"
                     f"SMA 150: ${current_sma_150:.2f} (Dist: {dist_pct*100:.1f}%)\n"
                     f"Trend: {trend}\n"
@@ -210,7 +211,7 @@ def run_scan():
                 # Plot and send
                 chart_stream = plot_chart(df.tail(100), ticker, trend, market_cap, current_atr)
                 send_telegram_photo(CHAT_ID, chart_stream, alert_message, TELEGRAM_TOKEN)
-                time.sleep(1) # Respect API limits
+                time.sleep(1)
 
         except Exception as e:
             print(f"Skipping {ticker}: {e}")
