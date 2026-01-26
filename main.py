@@ -140,23 +140,29 @@ def analyze_stock(ticker):
         elif current_sma < prev_sma * 0.995: trend = "Down 🔴"
         else: trend = "Flat ⚪"
 
-        # Check Condition: Distance <= 2.5%
+       # Check Condition: Distance <= 2.5% AND RSI Filtering
         dist_pct = abs(current_close - current_sma) / current_sma
-        if dist_pct <= 0.025:
+        
+        # === כאן השינוי ===
+        # אנו דורשים שני תנאים:
+        # 1. המרחק מהממוצע הוא עד 2.5%
+        # 2. ה-RSI נמוך מ-50 (כדי לוודא שאנחנו לא קונים בשיא)
+        if dist_pct <= 0.025 and current_rsi < 50:
+            
             ticker_obj = yf.Ticker(ticker)
             market_cap = get_market_cap(ticker_obj)
             
             # Create Plot
             chart_img = plot_chart(df.tail(100), ticker, trend, market_cap, current_atr, current_rsi)
             
-            # TradingView Link
+            # ... המשך הקוד רגיל ...
             tv_link = f"https://www.tradingview.com/chart/?symbol={ticker}"
-
+            
             message = (
                 f"🔔 *Alert:* `{ticker}`\n"
                 f"Price: ${current_close:.2f}\n"
                 f"SMA 150: ${current_sma:.2f} (Dist: {dist_pct*100:.1f}%)\n"
-                f"RSI(14): {current_rsi:.1f}\n"
+                f"RSI(14): {current_rsi:.1f}\n" # ה-RSI כבר מחושב ומוכן
                 f"Trend: {trend}\n"
                 f"Cap: {market_cap}\n"
                 f"ATR: {current_atr:.2f}\n"
