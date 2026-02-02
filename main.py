@@ -8,7 +8,7 @@ import io
 import numpy as np
 from datetime import datetime, timedelta
 import time
-import concurrent.futures # ספרייה לעבודה במקביל
+import concurrent.futures
 
 # --- Configuration ---
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
@@ -38,7 +38,7 @@ def get_sp500_tickers():
         return clean_tickers
     except Exception as e:
         print(f"Error fetching tickers: {e}")
-        return ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA'] # Fallback
+        return ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA']
 
 def send_telegram_message(chat_id, message, token):
     url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -67,7 +67,6 @@ def get_market_cap(ticker_obj):
     except: return "N/A"
 
 def calculate_rsi(data, window=14):
-    """Calculates the Relative Strength Index (RSI)."""
     delta = data.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
@@ -77,7 +76,7 @@ def calculate_rsi(data, window=14):
 def plot_chart(df, ticker, trend, market_cap, atr_value, rsi_value):
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), gridspec_kw={'height_ratios': [3, 1]})
     
-    # Main Price Chart
+    # Price Chart
     ax1.plot(df.index, df['Close'], color='#00ff00', label='Price', linewidth=1.5)
     ax1.plot(df.index, df['SMA_150'], color='cyan', label='SMA 150', linestyle='--', linewidth=1.5)
     ax1.fill_between(df.index, df['Close'], df['SMA_150'], where=(df['Close'] > df['SMA_150']), color='green', alpha=0.1)
@@ -88,8 +87,8 @@ def plot_chart(df, ticker, trend, market_cap, atr_value, rsi_value):
 
     # RSI Chart
     ax2.plot(df.index, df['RSI'], color='yellow', label='RSI(14)', linewidth=1.5)
-    ax2.axhline(70, color='red', linestyle='--', alpha=0.5) # Overbought
-    ax2.axhline(30, color='green', linestyle='--', alpha=0.5) # Oversold
+    ax2.axhline(70, color='red', linestyle='--', alpha=0.5)
+    ax2.axhline(30, color='green', linestyle='--', alpha=0.5)
     ax2.set_title(f"RSI: {rsi_value:.1f}", fontsize=10)
     ax2.set_ylim(0, 100)
     ax2.grid(True, linestyle=':', alpha=0.6)
@@ -102,23 +101,21 @@ def plot_chart(df, ticker, trend, market_cap, atr_value, rsi_value):
     plt.close(fig)
     return buf
 
-# --- Core Logic per Stock ---
+# --- Core Logic ---
 
 def analyze_stock(ticker):
-    """Downloads and analyzes a single stock. Returns alert data or None."""
+    """Returns tuple (chart_img, message, rsi_value) if alert found, else None."""
     try:
-        # Download 2 years of data
         end_date = datetime.now()
         start_date = end_date - timedelta(days=730)
         
         df = yf.Ticker(ticker).history(start=start_date, end=end_date)
         if df.empty or len(df) < 150: return None
 
-        # Indicators
         df['SMA_150'] = df['Close'].rolling(window=150).mean()
         df['RSI'] = calculate_rsi(df['Close'])
         
-        # ATR Calculation
+        # ATR
         df['High-Low'] = df['High'] - df['Low']
         df['High-PrevClose'] = abs(df['High'] - df['Close'].shift(1))
         df['Low-PrevClose'] = abs(df['Low'] - df['Close'].shift(1))
@@ -128,50 +125,43 @@ def analyze_stock(ticker):
         df.dropna(subset=['SMA_150', 'ATR', 'RSI'], inplace=True)
         if df.empty: return None
 
-        # Current Values
         current_close = df['Close'].iloc[-1]
         current_sma = df['SMA_150'].iloc[-1]
         current_rsi = df['RSI'].iloc[-1]
         current_atr = df['ATR'].iloc[-1]
         
-        # Trend Detection
         prev_sma = df['SMA_150'].iloc[-6]
         if current_sma > prev_sma * 1.005: trend = "Up 🟢"
         elif current_sma < prev_sma * 0.995: trend = "Down 🔴"
         else: trend = "Flat ⚪"
 
-       # Check Condition: Distance <= 2.5% AND RSI Filtering
         dist_pct = abs(current_close - current_sma) / current_sma
         
-        # === כאן השינוי ===
-        # אנו דורשים שני תנאים:
-        # 1. המרחק מהממוצע הוא עד 2.5%
-        # 2. ה-RSI נמוך מ-50 (כדי לוודא שאנחנו לא קונים בשיא)
+        # === תנאי סינון ===
+        # 1. מרחק עד 2.5% מהממוצע
+        # 2. RSI נמוך מ-50 (כדי לא לקנות בשיא)
         if dist_pct <= 0.025 and current_rsi < 50:
-            
             ticker_obj = yf.Ticker(ticker)
             market_cap = get_market_cap(ticker_obj)
             
-            # Create Plot
             chart_img = plot_chart(df.tail(100), ticker, trend, market_cap, current_atr, current_rsi)
-            
-            # ... המשך הקוד רגיל ...
             tv_link = f"https://www.tradingview.com/chart/?symbol={ticker}"
-            
+
             message = (
                 f"🔔 *Alert:* `{ticker}`\n"
                 f"Price: ${current_close:.2f}\n"
                 f"SMA 150: ${current_sma:.2f} (Dist: {dist_pct*100:.1f}%)\n"
-                f"RSI(14): {current_rsi:.1f}\n" # ה-RSI כבר מחושב ומוכן
+                f"RSI(14): {current_rsi:.1f}\n"
                 f"Trend: {trend}\n"
                 f"Cap: {market_cap}\n"
                 f"ATR: {current_atr:.2f}\n"
                 f"[View on TradingView]({tv_link})"
             )
             
-            return (chart_img, message)
+            # מחזירים גם את ה-RSI (באינדקס 2) כדי שנוכל למיין לפיו אחר כך
+            return (chart_img, message, current_rsi)
             
-    except Exception as e:
+    except Exception:
         return None
     return None
 
@@ -183,27 +173,34 @@ def run_scan():
         return
 
     tickers = get_sp500_tickers()
-    if not tickers:
-        send_telegram_message(CHAT_ID, "❌ Failed to fetch list.", TELEGRAM_TOKEN)
-        return
+    if not tickers: return
 
-    print(f"Starting parallel scan for {len(tickers)} tickers...")
-    alerts_found = 0
+    print(f"Starting scan for {len(tickers)} tickers...")
+    
+    # רשימה לאגירת התוצאות
+    valid_alerts = []
 
-    # Parallel Processing using ThreadPoolExecutor
-    # This runs 20 downloads simultaneously instead of 1 by 1
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
         results = list(executor.map(analyze_stock, tickers))
 
-    # Process results
-    for result in results:
-        if result:
-            alerts_found += 1
-            chart_img, msg = result
-            send_telegram_photo(CHAT_ID, chart_img, msg, TELEGRAM_TOKEN)
-            time.sleep(1) # Prevent Telegram flooding
+    # סינון תוצאות ריקות ושמירה לרשימה
+    for res in results:
+        if res:
+            valid_alerts.append(res)
 
-    final_msg = f"✅ Scan finished. Found {alerts_found} opportunities."
+    # === כאן המיון מתבצע ===
+    # מיון מהנמוך לגבוה לפי ה-RSI (שהוא האיבר השלישי בטאפל, אינדקס 2)
+    valid_alerts.sort(key=lambda x: x[2])
+
+    print(f"Found {len(valid_alerts)} alerts. Sending sorted by RSI...")
+
+    # שליחת ההודעות לפי הסדר הממוין
+    for alert in valid_alerts:
+        chart_img, msg, rsi = alert
+        send_telegram_photo(CHAT_ID, chart_img, msg, TELEGRAM_TOKEN)
+        time.sleep(1.5) # השהייה קטנה כדי שטלגרם לא יחסום בגלל שליחה מהירה
+
+    final_msg = f"✅ Scan finished. Sent {len(valid_alerts)} alerts (Sorted by RSI Low->High)."
     send_telegram_message(CHAT_ID, final_msg, TELEGRAM_TOKEN)
     print(final_msg)
 
