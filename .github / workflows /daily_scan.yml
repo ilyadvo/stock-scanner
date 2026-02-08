@@ -3,7 +3,7 @@ name: "Daily S&P 500 Stock Scan"
 on:
   schedule:
     # Runs at 09:00 UTC (11:00 AM Israel time) Monday-Friday
-    - cron: '0 9 * * 1-5'
+    - cron: '0 8 * * 1-5'
   workflow_dispatch: # Allows manual run from Actions tab for testing
 
 jobs:
