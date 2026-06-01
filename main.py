@@ -2,24 +2,13 @@ import os
 import requests
 import pandas as pd
 import yfinance as yf
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-import io
-import numpy as np
 from datetime import datetime, timedelta
 import time
 import concurrent.futures
-import json
 
 # --- Configuration ---
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 CHAT_ID = os.environ.get('CHAT_ID')
-
-# --- Matplotlib Dark Mode Setup ---
-plt.style.use('dark_background')
-plt.rcParams['figure.facecolor'] = '#1a1a1a'
-plt.rcParams['axes.facecolor'] = '#1a1a1a'
-plt.rcParams['text.color'] = 'lightgrey'
 
 # --- Helper Functions ---
 
@@ -33,27 +22,19 @@ def get_sp500_tickers():
         print(f"Error fetching tickers: {e}")
         return ['AAPL', 'MSFT', 'NVDA']
 
-def send_telegram_media_group(chat_id, media_list, token):
-    """Sends a group of photos (up to 10) with individual captions."""
-    url = f"https://api.telegram.org/bot{token}/sendMediaGroup"
-    files = {}
-    media = []
-    
-    for i, (photo_stream, caption) in enumerate(media_list):
-        file_id = f"photo{i}"
-        media.append({
-            'type': 'photo',
-            'media': f'attach://{file_id}',
-            'caption': caption,
-            'parse_mode': 'Markdown'
-        })
-        files[file_id] = photo_stream
-
-    payload = {'chat_id': chat_id, 'media': json.dumps(media)}
+def send_telegram_message(chat_id, message, token):
+    """Sends a single text message to Telegram."""
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {
+        'chat_id': chat_id, 
+        'text': message, 
+        'parse_mode': 'Markdown',
+        'disable_web_page_preview': True  # מונע מטלגרם לייצר תצוגה מקדימה ומציקה לקישורים
+    }
     try:
-        return requests.post(url, data=payload, files=files, timeout=30)
+        return requests.post(url, json=payload, timeout=10)
     except Exception as e:
-        print(f"Error sending Media Group: {e}")
+        print(f"Error sending message: {e}")
         return None
 
 def calculate_rsi(data, window=14):
@@ -63,36 +44,12 @@ def calculate_rsi(data, window=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-def plot_chart(df, ticker, trend):
-    """Creates a combined Price and RSI chart."""
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), gridspec_kw={'height_ratios': [3, 1]})
-    
-    # Price Axis
-    ax1.plot(df.index, df['Close'], color='#00ff00', linewidth=1.5, label='Price')
-    ax1.plot(df.index, df['SMA_150'], color='cyan', linestyle='--', linewidth=1.2, label='SMA 150')
-    ax1.fill_between(df.index, df['Close'], df['SMA_150'], color='cyan', alpha=0.1)
-    ax1.set_title(f"{ticker} | {trend}", color='white', fontweight='bold', fontsize=14)
-    ax1.grid(True, linestyle=':', alpha=0.3)
-    
-    # RSI Axis
-    ax2.plot(df.index, df['RSI'], color='yellow', linewidth=1)
-    ax2.axhline(30, color='red', linestyle='--', alpha=0.5)
-    ax2.axhline(70, color='red', linestyle='--', alpha=0.5)
-    ax2.set_ylim(0, 100)
-    ax2.grid(True, linestyle=':', alpha=0.3)
-    
-    fig.autofmt_xdate()
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', dpi=90)
-    buf.seek(0)
-    plt.close(fig)
-    return buf
-
 # --- Core Analysis ---
 
 def analyze_stock(ticker):
-    """Processes a single stock and returns chart + caption data."""
+    """Processes a single stock and returns text data if criteria met."""
     try:
+        # הורדת נתונים (period של שנתיים מספיק ל-SMA 150)
         df = yf.Ticker(ticker).history(period="2y")
         if len(df) < 150: return None
         
@@ -100,60 +57,73 @@ def analyze_stock(ticker):
         df['RSI'] = calculate_rsi(df['Close'])
         
         curr = df.iloc[-1]
-        prev_sma = df['SMA_150'].iloc[-6]
+        prev_sma = df['SMA_150'].iloc[-6] # 5 ימי מסחר אחורה
         dist = abs(curr['Close'] - curr['SMA_150']) / curr['SMA_150']
         
-        # סינון: מרחק < 2.5% ו-RSI < 50
+        # סינון: מרחק קטן מ-2.5% ו-RSI קטן מ-50
         if dist <= 0.025 and curr['RSI'] < 50:
             trend = "Rising 🟢" if curr['SMA_150'] > prev_sma * 1.005 else "Falling 🔴" if curr['SMA_150'] < prev_sma * 0.995 else "Flat ⚪"
             
-            # יצירת הגרף
-            chart = plot_chart(df.tail(80), ticker, trend)
+            # תיקון הקישור ל-TradingView (נתיב חיפוש ישיר שעובד תמיד)
+            tv_link = f"https://www.tradingview.com/symbols/{ticker}/"
             
-            # יצירת הכיתוב שיוצמד לתמונה
-            tv_link = f"https://www.tradingview.com/chart/?symbol={ticker}"
-            caption = (
-                f"🎯 `{ticker}` (Click to Copy)\n"
-                f"Price: ${curr['Close']:.2f} | RSI: {curr['RSI']:.1f}\n"
-                f"Dist from SMA: {dist*100:.1f}%\n"
-                f"Trend: {trend}\n"
-                f"[Open in TradingView]({tv_link})"
+            # יצירת השורה עבור המניה הנוכחית
+            line = (
+                f"🎯 `{ticker}` | Price: ${curr['Close']:.2f} | "
+                f"RSI: {curr['RSI']:.1f} | Dist: {dist*100:.1f}% | "
+                f"Trend: {trend} | [TV Link]({tv_link})"
             )
             
-            return (chart, caption, curr['RSI'])
-    except: return None
+            return {"rsi": curr['RSI'], "line": line}
+    except: 
+        return None
     return None
 
 # --- Main Logic ---
 
 def run_scan():
-    if not TELEGRAM_TOKEN or not CHAT_ID: return
+    if not TELEGRAM_TOKEN or not CHAT_ID: 
+        print("Missing Tokens")
+        return
     
     tickers = get_sp500_tickers()
-    print(f"Scanning {len(tickers)} tickers...")
+    print(f"Starting text-only scan for {len(tickers)} tickers...")
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        # אוספים את כל התוצאות שעברו את הסינון
+        # אוספים את כל התוצאות ומסננים את ה-None
         results = [r for r in list(executor.map(analyze_stock, tickers)) if r]
 
     if not results:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, json={'chat_id': CHAT_ID, 'text': "➖ No stocks met the criteria today."}, timeout=10)
+        send_telegram_message(CHAT_ID, "➖ לא נמצאו מניות העונות לקריטריונים היום.", TELEGRAM_TOKEN)
         return
 
     # מיון התוצאות לפי RSI מהנמוך לגבוה
-    results.sort(key=lambda x: x[2])
+    results.sort(key=lambda x: x['rsi'])
 
-    # שליחה בקבוצות (Albums) של עד 10 מניות
-    # כל תמונה באלבום תכיל את הטקסט הספציפי שלה
-    for i in range(0, len(results), 10):
-        batch = results[i:i+10]
-        # מכינים רשימת (גרף, כיתוב) עבור הפונקציה
-        media_group = [(item[0], item[1]) for item in batch]
-        send_telegram_media_group(CHAT_ID, media_group, TELEGRAM_TOKEN)
-        time.sleep(2) # השהייה קלה למניעת חסימה
+    # בניית הודעת הטקסט המרוכזת
+    message_lines = [
+        "📊 *דו\"ח סריקה יומי - S&P 500*",
+        f"נמצאו {len(results)} הזדמנויות קרובות ל-SMA 150 (RSI < 50):",
+        "_ממוין מ-RSI נמוך לגבוה_",
+        ""
+    ]
+    
+    for r in results:
+        message_lines.append(r['line'])
 
-    print(f"Done! Sent {len(results)} alerts.")
+    full_message = "\n".join(message_lines)
+
+    # שליחת ההודעה (אם היא ארוכה מדי, פייתון יחתוך אותה אוטומטית לקבוצות של הודעות, אך לרוב S&P500 זה ייכנס בהודעה אחת)
+    if len(full_message) > 4000:
+        # הגנה קטנה למקרה שיש עשרות רבות של מניות
+        for i in range(0, len(message_lines), 30):
+            chunk = "\n".join(message_lines[i:i+30])
+            send_telegram_message(CHAT_ID, chunk, TELEGRAM_TOKEN)
+            time.sleep(1)
+    else:
+        send_telegram_message(CHAT_ID, full_message, TELEGRAM_TOKEN)
+
+    print(f"Done! Sent report with {len(results)} stocks.")
 
 if __name__ == "__main__":
     run_scan()
