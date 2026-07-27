@@ -10,6 +10,9 @@ import concurrent.futures
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 CHAT_ID = os.environ.get('CHAT_ID')
 
+# רשימת המניות להדגשה
+BIG_TECH = ['AAPL', 'MSFT', 'AMZN', 'GOOGL', 'META', 'NVDA', 'TSLA', 'AVGO']
+
 # --- Helper Functions ---
 
 def get_sp500_tickers():
@@ -20,7 +23,7 @@ def get_sp500_tickers():
         return [t.replace('.', '-') for t in df['Symbol'].tolist()]
     except Exception as e:
         print(f"Error fetching tickers: {e}")
-        return ['AAPL', 'MSFT', 'NVDA']
+        return BIG_TECH # במקרה של שגיאה, נסרוק לפחות את הגדולות
 
 def send_telegram_message(chat_id, message, token):
     """Sends a single text message to Telegram."""
@@ -29,7 +32,7 @@ def send_telegram_message(chat_id, message, token):
         'chat_id': chat_id, 
         'text': message, 
         'parse_mode': 'Markdown',
-        'disable_web_page_preview': True  # מונע מטלגרם לייצר תצוגה מקדימה ומציקה לקישורים
+        'disable_web_page_preview': True
     }
     try:
         return requests.post(url, json=payload, timeout=10)
@@ -44,12 +47,47 @@ def calculate_rsi(data, window=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
+def check_cup_and_handle(df):
+    """
+    מתודה היוריסטית לזיהוי תבנית ספל וידית.
+    דורשת לפחות 120 ימי מסחר.
+    """
+    if len(df) < 120:
+        return False
+
+    try:
+        left_part = df['High'].iloc[-120:-60]   
+        middle_part = df['Low'].iloc[-80:-20]   
+        right_part = df['High'].iloc[-30:-5]    
+        
+        left_lip_max = left_part.max()
+        cup_bottom = middle_part.min()
+        right_lip_max = right_part.max()
+        current_price = df['Close'].iloc[-1]
+
+        cup_depth = (left_lip_max - cup_bottom) / left_lip_max
+        if not (0.10 <= cup_depth <= 0.40):
+            return False
+
+        if abs(right_lip_max - left_lip_max) / left_lip_max > 0.10:
+            return False
+
+        handle_pullback = (right_lip_max - current_price) / right_lip_max
+        if not (0.02 <= handle_pullback <= 0.15):
+            return False
+            
+        if current_price <= cup_bottom + (left_lip_max - cup_bottom) * 0.5:
+            return False
+
+        return True
+    except:
+        return False
+
 # --- Core Analysis ---
 
 def analyze_stock(ticker):
     """Processes a single stock and returns text data if criteria met."""
     try:
-        # הורדת נתונים (period של שנתיים מספיק ל-SMA 150)
         df = yf.Ticker(ticker).history(period="2y")
         if len(df) < 150: return None
         
@@ -57,21 +95,30 @@ def analyze_stock(ticker):
         df['RSI'] = calculate_rsi(df['Close'])
         
         curr = df.iloc[-1]
-        prev_sma = df['SMA_150'].iloc[-6] # 5 ימי מסחר אחורה
+        prev_sma = df['SMA_150'].iloc[-6]
         dist = abs(curr['Close'] - curr['SMA_150']) / curr['SMA_150']
         
-        # סינון: מרחק קטן מ-2.5% ו-RSI קטן מ-50
+        # סינון: מרחק < 2.5% ו-RSI < 50
         if dist <= 0.025 and curr['RSI'] < 50:
             trend = "Rising 🟢" if curr['SMA_150'] > prev_sma * 1.005 else "Falling 🔴" if curr['SMA_150'] < prev_sma * 0.995 else "Flat ⚪"
-            
-            # תיקון הקישור ל-TradingView (נתיב חיפוש ישיר שעובד תמיד)
             tv_link = f"https://www.tradingview.com/symbols/{ticker}/"
             
-            # יצירת השורה עבור המניה הנוכחית
+            # בדיקת תבנית ספל וידית
+            is_cnh = check_cup_and_handle(df)
+            cnh_flag = " | *☕ C&H Pattern*" if is_cnh else ""
+            
+            # הדגשת מניות ספציפיות
+            if ticker in BIG_TECH:
+                prefix = "⭐️ 👑"
+                bold_ticker = f"*{ticker}*"
+            else:
+                prefix = "🎯"
+                bold_ticker = f"`{ticker}`"
+            
             line = (
-                f"🎯 `{ticker}` | Price: ${curr['Close']:.2f} | "
+                f"{prefix} {bold_ticker} | Price: ${curr['Close']:.2f} | "
                 f"RSI: {curr['RSI']:.1f} | Dist: {dist*100:.1f}% | "
-                f"Trend: {trend} | [TV Link]({tv_link})"
+                f"Trend: {trend}{cnh_flag} | [TV Link]({tv_link})"
             )
             
             return {"rsi": curr['RSI'], "line": line}
@@ -90,7 +137,6 @@ def run_scan():
     print(f"Starting text-only scan for {len(tickers)} tickers...")
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        # אוספים את כל התוצאות ומסננים את ה-None
         results = [r for r in list(executor.map(analyze_stock, tickers)) if r]
 
     if not results:
@@ -100,7 +146,6 @@ def run_scan():
     # מיון התוצאות לפי RSI מהנמוך לגבוה
     results.sort(key=lambda x: x['rsi'])
 
-    # בניית הודעת הטקסט המרוכזת
     message_lines = [
         "📊 *דו\"ח סריקה יומי - S&P 500*",
         f"נמצאו {len(results)} הזדמנויות קרובות ל-SMA 150 (RSI < 50):",
@@ -113,9 +158,7 @@ def run_scan():
 
     full_message = "\n".join(message_lines)
 
-    # שליחת ההודעה (אם היא ארוכה מדי, פייתון יחתוך אותה אוטומטית לקבוצות של הודעות, אך לרוב S&P500 זה ייכנס בהודעה אחת)
     if len(full_message) > 4000:
-        # הגנה קטנה למקרה שיש עשרות רבות של מניות
         for i in range(0, len(message_lines), 30):
             chunk = "\n".join(message_lines[i:i+30])
             send_telegram_message(CHAT_ID, chunk, TELEGRAM_TOKEN)
